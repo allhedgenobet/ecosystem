@@ -28,6 +28,16 @@ const APEX_REPRO_BASE = 0.1;
 
 const EDGE_PAD = 56;
 
+const SOUND_BASE = 0.015;
+
+let audioCtx = null;
+let masterGain = null;
+let branchOsc = null;
+let eaterOsc = null;
+let predOsc = null;
+let apexOsc = null;
+let soundOn = false;
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const mut = (v, d, lo, hi) => clamp(v + (r() * 2 - 1) * d, lo, hi);
 
@@ -91,6 +101,58 @@ let predators = [];
 let apexes = [];
 
 const inBounds2D = (px, py) => px >= minX && px <= maxX && py >= minY && py <= maxY;
+
+const safeSet = (audioParam, value, t = 0.08) => {
+  if (!audioParam || !audioCtx) return;
+  const now = audioCtx.currentTime;
+  audioParam.setTargetAtTime(value, now, t);
+};
+
+const initSound = () => {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (soundOn || typeof Ctx === 'undefined') return;
+
+  audioCtx = new Ctx();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0;
+  masterGain.connect(audioCtx.destination);
+
+  branchOsc = audioCtx.createOscillator();
+  const branchGain = audioCtx.createGain();
+  branchOsc.type = 'triangle';
+  branchOsc.frequency.value = 110;
+  branchGain.gain.value = SOUND_BASE * 0.8;
+  branchOsc.connect(branchGain).connect(masterGain);
+
+  eaterOsc = audioCtx.createOscillator();
+  const eaterGain = audioCtx.createGain();
+  eaterOsc.type = 'sawtooth';
+  eaterOsc.frequency.value = 180;
+  eaterGain.gain.value = SOUND_BASE * 0.45;
+  eaterOsc.connect(eaterGain).connect(masterGain);
+
+  predOsc = audioCtx.createOscillator();
+  const predGain = audioCtx.createGain();
+  predOsc.type = 'square';
+  predOsc.frequency.value = 260;
+  predGain.gain.value = SOUND_BASE * 0.3;
+  predOsc.connect(predGain).connect(masterGain);
+
+  apexOsc = audioCtx.createOscillator();
+  const apexGain = audioCtx.createGain();
+  apexOsc.type = 'sine';
+  apexOsc.frequency.value = 80;
+  apexGain.gain.value = SOUND_BASE * 0.55;
+  apexOsc.connect(apexGain).connect(masterGain);
+
+  branchOsc.start();
+  eaterOsc.start();
+  predOsc.start();
+  apexOsc.start();
+
+  safeSet(masterGain.gain, SOUND_BASE * 2.3, 0.25);
+  soundOn = true;
+};
 
 const spawn = (scale = 1, px = minX + r() * (maxX - minX), py = minY + r() * (maxY - minY)) => {
   tips.push({
@@ -177,6 +239,12 @@ function loop() {
   x.fillStyle = `rgba(0,0,0,${FADE})`;
   x.fillRect(0, 0, w, h);
 
+  if (!soundOn) {
+    x.fillStyle = 'rgba(255,255,255,0.78)';
+    x.font = '14px system-ui, sans-serif';
+    x.fillText('click or press any key for sound', 16, 26);
+  }
+
   wind *= 0.985;
   wind += (r() * 2 - 1) * 0.00045;
   wind = clamp(wind, -0.06, 0.06);
@@ -194,6 +262,16 @@ function loop() {
 
   const load = clamp(tips.length / DENSITY_REF, 0, 2);
   const branchScale = clamp(1 - load * 0.75, 0.08, 1);
+
+  if (soundOn) {
+    safeSet(branchOsc.frequency, 90 + load * 140 + wind * 180, 0.09);
+    safeSet(eaterOsc.frequency, 140 + eaters.length * 2.2, 0.1);
+    safeSet(predOsc.frequency, 200 + predators.length * 3.5, 0.1);
+    safeSet(apexOsc.frequency, 70 + apexes.length * 6.5, 0.12);
+
+    const loudness = SOUND_BASE * (1.5 + load * 0.8 + eaters.length / 90);
+    safeSet(masterGain.gain, clamp(loudness, 0.01, 0.06), 0.2);
+  }
 
   const next = [];
   for (const t of tips) {
@@ -517,5 +595,8 @@ function loop() {
 }
 
 window.addEventListener('resize', init);
+window.addEventListener('pointerdown', initSound, { once: true });
+window.addEventListener('keydown', initSound, { once: true });
+
 init();
 requestAnimationFrame(loop);
