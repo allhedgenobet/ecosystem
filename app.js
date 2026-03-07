@@ -44,7 +44,7 @@ const mut = (v, d, lo, hi) => clamp(v + (r() * 2 - 1) * d, lo, hi);
 
 const INSTRUMENTS = ['sine', 'triangle', 'square', 'sawtooth'];
 const makeInstrument = (role) => {
-  const roleBias = role === 'eater' ? 0 : role === 'pred' ? 45 : -35;
+  const roleBias = role === 'plant' ? 70 : role === 'eater' ? 0 : role === 'pred' ? 45 : -35;
   return {
     wave: INSTRUMENTS[(r() * INSTRUMENTS.length) | 0],
     detune: roleBias + (r() * 2 - 1) * 90,
@@ -52,8 +52,8 @@ const makeInstrument = (role) => {
   };
 };
 
-const childInstrument = (inst) => ({
-  wave: r() < 0.84 ? inst.wave : INSTRUMENTS[(r() * INSTRUMENTS.length) | 0],
+const childInstrument = (inst, waveMutation = 0.16) => ({
+  wave: r() < (1 - waveMutation) ? inst.wave : INSTRUMENTS[(r() * INSTRUMENTS.length) | 0],
   detune: clamp(inst.detune + (r() * 2 - 1) * 18, -180, 180),
   tone: clamp(inst.tone + (r() * 2 - 1) * 0.06, 0.72, 1.35),
 });
@@ -159,7 +159,8 @@ const pulseOrganism = (org, baseFreq, baseGain, attack, decay) => {
 const emitEvents = (ev) => {
   if (!soundOn) return;
 
-  if (ev.branches > 0) pulse('triangle', 420 + Math.min(180, ev.branches * 10), 0.006 + Math.min(0.01, ev.branches * 0.0008), 0.003, 0.05);
+  for (const b of ev.branches) pulseOrganism(b, 420, 0.006, 0.003, 0.05);
+  if (ev.branches.length > 6) pulse('triangle', 420 + Math.min(180, ev.branches.length * 10), 0.0035 + Math.min(0.006, ev.branches.length * 0.00035), 0.002, 0.04);
 
   for (const g of ev.eats) pulseOrganism(g, 220, 0.007, 0.004, 0.08);
   for (const p of ev.predKills) pulseOrganism(p, 300, 0.009, 0.002, 0.07);
@@ -224,6 +225,7 @@ const spawn = (scale = 1, px = minX + r() * (maxX - minX), py = minY + r() * (ma
     j: 0.014 + r() * 0.03,
     sp: 0.9 + r() * 0.45,
     cv: (r() * 2 - 1) * 0.022,
+    inst: makeInstrument('plant'),
   });
 };
 
@@ -327,7 +329,7 @@ function loop() {
 
   framePulseBudget = 28;
   const ev = {
-    branches: 0,
+    branches: [],
     eats: [],
     predKills: [],
     apexKills: [],
@@ -384,9 +386,11 @@ function loop() {
       x.arc(t.x, t.y, Math.max(1.2, 1.8 + tw * 0.35), 0, Math.PI * 2);
       x.fill();
 
-      next.push({ x: t.x, y: t.y, a: t.a - split, w: tw, h: th, br, j, sp, cv });
-      next.push({ x: t.x, y: t.y, a: t.a + split, w: tw, h: th, br, j, sp, cv });
-      ev.branches += 1;
+      const instL = childInstrument(t.inst, 0.08);
+      const instR = childInstrument(t.inst, 0.08);
+      next.push({ x: t.x, y: t.y, a: t.a - split, w: tw, h: th, br, j, sp, cv, inst: instL });
+      next.push({ x: t.x, y: t.y, a: t.a + split, w: tw, h: th, br, j, sp, cv, inst: instR });
+      if (ev.branches.length < 12) ev.branches.push(t);
     }
 
     next.push(t);
