@@ -108,6 +108,35 @@ const safeSet = (audioParam, value, t = 0.08) => {
   audioParam.setTargetAtTime(value, now, t);
 };
 
+const pulse = (type, freq, gain, attack = 0.004, decay = 0.09) => {
+  if (!soundOn || !audioCtx || !masterGain) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), now + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + attack + decay);
+
+  osc.connect(g).connect(masterGain);
+  osc.start(now);
+  osc.stop(now + attack + decay + 0.03);
+};
+
+const emitEvents = (ev) => {
+  if (!soundOn) return;
+
+  if (ev.branches > 0) pulse('triangle', 420 + Math.min(180, ev.branches * 10), 0.006 + Math.min(0.01, ev.branches * 0.0008), 0.003, 0.05);
+  if (ev.eats > 0) pulse('sine', 220 + Math.min(140, ev.eats * 7), 0.007 + Math.min(0.012, ev.eats * 0.001), 0.004, 0.08);
+  if (ev.predKills > 0) pulse('square', 300 + Math.min(220, ev.predKills * 18), 0.009 + Math.min(0.014, ev.predKills * 0.0012), 0.002, 0.07);
+  if (ev.apexKills > 0) pulse('sawtooth', 120 + Math.min(100, ev.apexKills * 9), 0.012 + Math.min(0.02, ev.apexKills * 0.0018), 0.003, 0.1);
+
+  const births = ev.eaterBirths + ev.predBirths + ev.apexBirths;
+  if (births > 0) pulse('triangle', 520 + Math.min(260, births * 22), 0.008 + Math.min(0.014, births * 0.0012), 0.005, 0.12);
+};
+
 const initSound = () => {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (soundOn || typeof Ctx === 'undefined') return;
@@ -263,6 +292,16 @@ function loop() {
   const load = clamp(tips.length / DENSITY_REF, 0, 2);
   const branchScale = clamp(1 - load * 0.75, 0.08, 1);
 
+  const ev = {
+    branches: 0,
+    eats: 0,
+    predKills: 0,
+    apexKills: 0,
+    eaterBirths: 0,
+    predBirths: 0,
+    apexBirths: 0,
+  };
+
   if (soundOn) {
     safeSet(branchOsc.frequency, 90 + load * 140 + wind * 180, 0.09);
     safeSet(eaterOsc.frequency, 140 + eaters.length * 2.2, 0.1);
@@ -315,6 +354,7 @@ function loop() {
 
       next.push({ x: t.x, y: t.y, a: t.a - split, w: tw, h: th, br, j, sp, cv });
       next.push({ x: t.x, y: t.y, a: t.a + split, w: tw, h: th, br, j, sp, cv });
+      ev.branches += 1;
     }
 
     next.push(t);
@@ -373,6 +413,7 @@ function loop() {
       if (dx * dx + dy * dy < eatR * eatR) {
         eaten = true;
         g.food += t.w < 1.05 ? 1.3 : 0.8;
+        ev.eats += 1;
         break;
       }
     }
@@ -402,7 +443,10 @@ function loop() {
       x.stroke();
     }
   }
-  if (babies.length > 0) eaters.push(...babies);
+  if (babies.length > 0) {
+    eaters.push(...babies);
+    ev.eaterBirths += babies.length;
+  }
 
   const predLoad = clamp(eaters.length / 120, 0.8, 2.4);
   for (const p of predators) {
@@ -457,6 +501,7 @@ function loop() {
       if (dx * dx + dy * dy < killR * killR) {
         killed = true;
         p.food += 1.6;
+        ev.predKills += 1;
         break;
       }
     }
@@ -486,7 +531,10 @@ function loop() {
       x.stroke();
     }
   }
-  if (predBabies.length > 0) predators.push(...predBabies);
+  if (predBabies.length > 0) {
+    predators.push(...predBabies);
+    ev.predBirths += predBabies.length;
+  }
 
   const apexLoad = clamp(predators.length / 80, 0.8, 2.6);
   for (const a of apexes) {
@@ -541,6 +589,7 @@ function loop() {
       if (dx * dx + dy * dy < killR * killR) {
         killed = true;
         a.food += 1.8;
+        ev.apexKills += 1;
         break;
       }
     }
@@ -570,7 +619,10 @@ function loop() {
       x.stroke();
     }
   }
-  if (apexBabies.length > 0) apexes.push(...apexBabies);
+  if (apexBabies.length > 0) {
+    apexes.push(...apexBabies);
+    ev.apexBirths += apexBabies.length;
+  }
 
   const keptApex = [];
   for (const a of apexes) {
@@ -590,6 +642,7 @@ function loop() {
   }
   eaters = resolveFights(keptEaters, 0.2, 0.9, 0.6, 'rgba(255,190,190,0.26)');
 
+  emitEvents(ev);
   tips = survivors;
   requestAnimationFrame(loop);
 }
