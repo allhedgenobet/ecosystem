@@ -3,7 +3,7 @@ const x = c.getContext('2d');
 const r = Math.random;
 
 const BRANCH = 0.022;
-const FADE = 0.01;
+const FADE = 0.05;
 const STEP = 1.12;
 const DENSITY_REF = 5000;
 
