@@ -37,9 +37,26 @@ let eaterOsc = null;
 let predOsc = null;
 let apexOsc = null;
 let soundOn = false;
+let framePulseBudget = 0;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const mut = (v, d, lo, hi) => clamp(v + (r() * 2 - 1) * d, lo, hi);
+
+const INSTRUMENTS = ['sine', 'triangle', 'square', 'sawtooth'];
+const makeInstrument = (role) => {
+  const roleBias = role === 'eater' ? 0 : role === 'pred' ? 45 : -35;
+  return {
+    wave: INSTRUMENTS[(r() * INSTRUMENTS.length) | 0],
+    detune: roleBias + (r() * 2 - 1) * 90,
+    tone: 0.88 + r() * 0.28,
+  };
+};
+
+const childInstrument = (inst) => ({
+  wave: r() < 0.84 ? inst.wave : INSTRUMENTS[(r() * INSTRUMENTS.length) | 0],
+  detune: clamp(inst.detune + (r() * 2 - 1) * 18, -180, 180),
+  tone: clamp(inst.tone + (r() * 2 - 1) * 0.06, 0.72, 1.35),
+});
 
 const resolveFights = (agents, strikeChance, rangeMul, foodGain, color) => {
   if (agents.length < 2) return agents;
@@ -108,14 +125,16 @@ const safeSet = (audioParam, value, t = 0.08) => {
   audioParam.setTargetAtTime(value, now, t);
 };
 
-const pulse = (type, freq, gain, attack = 0.004, decay = 0.09) => {
-  if (!soundOn || !audioCtx || !masterGain) return;
+const pulse = (type, freq, gain, attack = 0.004, decay = 0.09, detune = 0) => {
+  if (!soundOn || !audioCtx || !masterGain || framePulseBudget <= 0) return;
+  framePulseBudget -= 1;
   const now = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
   const g = audioCtx.createGain();
 
   osc.type = type;
   osc.frequency.setValueAtTime(freq, now);
+  osc.detune.setValueAtTime(detune, now);
   g.gain.setValueAtTime(0.0001, now);
   g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), now + attack);
   g.gain.exponentialRampToValueAtTime(0.0001, now + attack + decay);
@@ -125,16 +144,27 @@ const pulse = (type, freq, gain, attack = 0.004, decay = 0.09) => {
   osc.stop(now + attack + decay + 0.03);
 };
 
+const pulseOrganism = (org, baseFreq, baseGain, attack, decay) => {
+  const inst = org && org.inst ? org.inst : { wave: 'sine', detune: 0, tone: 1 };
+  pulse(
+    inst.wave,
+    baseFreq * inst.tone,
+    baseGain,
+    attack,
+    decay,
+    inst.detune
+  );
+};
+
 const emitEvents = (ev) => {
   if (!soundOn) return;
 
   if (ev.branches > 0) pulse('triangle', 420 + Math.min(180, ev.branches * 10), 0.006 + Math.min(0.01, ev.branches * 0.0008), 0.003, 0.05);
-  if (ev.eats > 0) pulse('sine', 220 + Math.min(140, ev.eats * 7), 0.007 + Math.min(0.012, ev.eats * 0.001), 0.004, 0.08);
-  if (ev.predKills > 0) pulse('square', 300 + Math.min(220, ev.predKills * 18), 0.009 + Math.min(0.014, ev.predKills * 0.0012), 0.002, 0.07);
-  if (ev.apexKills > 0) pulse('sawtooth', 120 + Math.min(100, ev.apexKills * 9), 0.012 + Math.min(0.02, ev.apexKills * 0.0018), 0.003, 0.1);
 
-  const births = ev.eaterBirths + ev.predBirths + ev.apexBirths;
-  if (births > 0) pulse('triangle', 520 + Math.min(260, births * 22), 0.008 + Math.min(0.014, births * 0.0012), 0.005, 0.12);
+  for (const g of ev.eats) pulseOrganism(g, 220, 0.007, 0.004, 0.08);
+  for (const p of ev.predKills) pulseOrganism(p, 300, 0.009, 0.002, 0.07);
+  for (const a of ev.apexKills) pulseOrganism(a, 120, 0.012, 0.003, 0.1);
+  for (const b of ev.births) pulseOrganism(b, 520, 0.008, 0.005, 0.12);
 };
 
 const initSound = () => {
@@ -206,6 +236,7 @@ const spawnEater = () => {
     rad: 6 + r() * 7,
     food: 0,
     tb: (r() * 2 - 1) * 0.035,
+    inst: makeInstrument('eater'),
   });
 };
 
@@ -218,6 +249,7 @@ const spawnPred = () => {
     rad: 6 + r() * 5,
     food: 0,
     tb: (r() * 2 - 1) * 0.03,
+    inst: makeInstrument('pred'),
   });
 };
 
@@ -230,6 +262,7 @@ const spawnApex = () => {
     rad: 6 + r() * 6,
     food: 0,
     tb: (r() * 2 - 1) * 0.028,
+    inst: makeInstrument('apex'),
   });
 };
 
@@ -292,14 +325,13 @@ function loop() {
   const load = clamp(tips.length / DENSITY_REF, 0, 2);
   const branchScale = clamp(1 - load * 0.75, 0.08, 1);
 
+  framePulseBudget = 28;
   const ev = {
     branches: 0,
-    eats: 0,
-    predKills: 0,
-    apexKills: 0,
-    eaterBirths: 0,
-    predBirths: 0,
-    apexBirths: 0,
+    eats: [],
+    predKills: [],
+    apexKills: [],
+    births: [],
   };
 
   if (soundOn) {
@@ -413,7 +445,7 @@ function loop() {
       if (dx * dx + dy * dy < eatR * eatR) {
         eaten = true;
         g.food += t.w < 1.05 ? 1.3 : 0.8;
-        ev.eats += 1;
+        if (ev.eats.length < 10) ev.eats.push(g);
         break;
       }
     }
@@ -434,6 +466,7 @@ function loop() {
         rad: clamp(g.rad - 0.25 + (r() * 2 - 1) * 0.7, 3.8, 12),
         food: g.food * 0.35,
         tb: clamp(g.tb + (r() * 2 - 1) * 0.01, -0.06, 0.06),
+        inst: childInstrument(g.inst),
       });
 
       x.strokeStyle = 'rgba(255,180,180,0.85)';
@@ -445,7 +478,7 @@ function loop() {
   }
   if (babies.length > 0) {
     eaters.push(...babies);
-    ev.eaterBirths += babies.length;
+    ev.births.push(...babies.slice(0, 6));
   }
 
   const predLoad = clamp(eaters.length / 120, 0.8, 2.4);
@@ -501,7 +534,7 @@ function loop() {
       if (dx * dx + dy * dy < killR * killR) {
         killed = true;
         p.food += 1.6;
-        ev.predKills += 1;
+        if (ev.predKills.length < 10) ev.predKills.push(p);
         break;
       }
     }
@@ -522,6 +555,7 @@ function loop() {
         rad: clamp(p.rad - 0.15 + (r() * 2 - 1) * 0.6, 4.2, 12),
         food: p.food * 0.34,
         tb: clamp(p.tb + (r() * 2 - 1) * 0.01, -0.06, 0.06),
+        inst: childInstrument(p.inst),
       });
 
       x.strokeStyle = 'rgba(160,200,255,0.9)';
@@ -533,7 +567,7 @@ function loop() {
   }
   if (predBabies.length > 0) {
     predators.push(...predBabies);
-    ev.predBirths += predBabies.length;
+    ev.births.push(...predBabies.slice(0, 5));
   }
 
   const apexLoad = clamp(predators.length / 80, 0.8, 2.6);
@@ -589,7 +623,7 @@ function loop() {
       if (dx * dx + dy * dy < killR * killR) {
         killed = true;
         a.food += 1.8;
-        ev.apexKills += 1;
+        if (ev.apexKills.length < 10) ev.apexKills.push(a);
         break;
       }
     }
@@ -610,6 +644,7 @@ function loop() {
         rad: clamp(a.rad - 0.1 + (r() * 2 - 1) * 0.55, 4.4, 13),
         food: a.food * 0.35,
         tb: clamp(a.tb + (r() * 2 - 1) * 0.01, -0.06, 0.06),
+        inst: childInstrument(a.inst),
       });
 
       x.strokeStyle = 'rgba(235,175,255,0.95)';
@@ -621,7 +656,7 @@ function loop() {
   }
   if (apexBabies.length > 0) {
     apexes.push(...apexBabies);
-    ev.apexBirths += apexBabies.length;
+    ev.births.push(...apexBabies.slice(0, 4));
   }
 
   const keptApex = [];
